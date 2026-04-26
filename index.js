@@ -4,8 +4,9 @@ const fetch = require('node-fetch');
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = 'RAW_DATA';
 
+// Монеты (BSBUSDT нет в Binance, убрал)
 const symbols = [
-  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'AXSUSDT', 
+  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'AXSUSDT',
   'ORCAUSDT', 'AVAXUSDT', 'HYPERUSDT', 'DOGEUSDT', 'BNBUSDT'
 ];
 
@@ -20,7 +21,6 @@ async function getAuth() {
 
 async function ensureSheetExists(sheets) {
   try {
-    // Проверяем, существует ли лист
     const spreadsheet = await sheets.spreadsheets.get({
       spreadsheetId: SPREADSHEET_ID
     });
@@ -30,7 +30,6 @@ async function ensureSheetExists(sheets) {
     );
     
     if (!sheetExists) {
-      // Создаем лист
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
         requestBody: {
@@ -38,16 +37,13 @@ async function ensureSheetExists(sheets) {
             addSheet: {
               properties: {
                 title: SHEET_NAME,
-                gridProperties: {
-                  frozenRowCount: 1
-                }
+                gridProperties: { frozenRowCount: 1 }
               }
             }
           }]
         }
       });
       
-      // Добавляем заголовки
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!A1:C1`,
@@ -73,10 +69,30 @@ async function fetchFromBinance(symbol) {
   for (const candle of data) {
     const date = new Date(candle[0]);
     const dateStr = date.toISOString().split('T')[0];
-    const volumeUSDT = parseFloat(candle[7]);
+    // Заменяем запятую на точку, потом в число
+    let volumeUSDT = parseFloat(candle[7].toString().replace(',', '.'));
+    // Если NaN, пробуем как есть
+    if (isNaN(volumeUSDT)) {
+      volumeUSDT = parseFloat(candle[7]);
+    }
     results.push([dateStr, symbol, volumeUSDT]);
   }
   return results;
+}
+
+async function updateTimestamp(sheets) {
+  const now = new Date();
+  const timestamp = `✅ Обновлено: ${now.toLocaleString()}`;
+  
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!E1`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: {
+      values: [[timestamp]]
+    }
+  });
+  console.log(`📝 Обновлен timestamp: ${timestamp}`);
 }
 
 async function main() {
@@ -85,7 +101,6 @@ async function main() {
   const auth = await getAuth();
   const sheets = google.sheets({ version: 'v4', auth });
   
-  // Убеждаемся, что лист существует
   await ensureSheetExists(sheets);
   
   let allData = [];
@@ -103,7 +118,7 @@ async function main() {
   }
   
   if (allData.length > 0) {
-    // Очищаем старые данные (начиная со строки 2)
+    // Очищаем старые данные
     await sheets.spreadsheets.values.clear({
       spreadsheetId: SPREADSHEET_ID,
       range: `${SHEET_NAME}!A2:C`
@@ -116,6 +131,9 @@ async function main() {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: allData }
     });
+    
+    // Обновляем timestamp в ячейке E1
+    await updateTimestamp(sheets);
     
     console.log(`📊 Загружено ${allData.length} записей в таблицу`);
   }
